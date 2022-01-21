@@ -1,0 +1,241 @@
+Build custom LineageOS 18.1 image
+
+Reference
+
+https://wiki.radxa.com/Zero/dev/LineageOS
+
+0. Prerequisite: You will need a Ubuntu 20.04 machine with at least 14GB of RAM, at least 200GB of disk space (SSD), and at least 4 CPU threads.
+Current setup: 14GB RAM and 320GB SSD
+
+1. Add 16G SWAP
+
+sudo swapoff /swapfile  
+sudo rm  /swapfile
+
+sudo dd if=/dev/zero of=/swapfile bs=1M count=16384
+sudo chmod 600 /swapfile
+sudo mkswap /swapfile
+sudo swapon /swapfile
+sudo reboot
+
+2. Install the platform-tools
+
+wget https://dl.google.com/android/repository/platform-tools-latest-linux.zip
+unzip platform-tools-latest-linux.zip -d ~
+
+3. Add adb and fastboot to your PATH
+
+nano ~/.profile
+
+add to the end
+
+# add Android SDK platform tools to path
+if [ -d "$HOME/platform-tools" ] ; then
+    PATH="$HOME/platform-tools:$PATH"
+fi
+
+and update environment
+
+source ~/.profile
+
+4. Install the build packages
+
+sudo apt install bc bison build-essential ccache curl flex g++-multilib gcc-multilib git gnupg gperf imagemagick lib32ncurses5-dev lib32readline-dev lib32z1-dev liblz4-tool libncurses5 libncurses5-dev libsdl1.2-dev libssl-dev libxml2 libxml2-utils lzop pngcrush rsync schedtool squashfs-tools xsltproc zip zlib1g-dev
+
+5. Create the directories
+
+mkdir -p ~/bin
+mkdir -p ~/android/lineage
+
+6. Install the repo command
+
+curl https://storage.googleapis.com/git-repo-downloads/repo > ~/bin/repo
+chmod a+x ~/bin/repo 
+
+7. Configure git
+
+git config --global user.email "you@example.com"
+git config --global user.name "Your Name"
+
+8. Turn on caching to speed up build
+
+export USE_CCACHE=1
+export CCACHE_EXEC=/usr/bin/ccache
+
+9. Add 50G ccache
+
+nano  ~/.bashrc
+
+add to the end
+
+ccache -M 50G
+
+
+10. Reduce Java Heap for soong (https://github.com/masemoel/build_soong_legion-r/commit/e020f2130224fbdbec1f83e3adfd06a9764cca87)
+
+nano ~/build/soong/java/config/config.go
+
+replace
+
+pctx.StaticVariable("JavacHeapSize", "2048M")
+
+to 
+
+pctx.StaticVariable("JavacHeapSize", "1024M")
+
+
+
+nano ~/build/soong/java/config/makevars.go
+
+replace
+
+ctx.Strict("DX_COMMAND", "${D8Cmd} -JXms16M -JXmx2048M")
+
+to 
+
+ctx.Strict("DX_COMMAND", "${D8Cmd} -JXms16M -JXmx1024M")
+
+
+11. Initialize the LineageOS source repository
+
+cd ~/android/lineage
+repo init -u https://github.com/LineageOS/android.git -b lineage-18.1
+
+12. Download the source code
+
+repo sync
+
+
+13. Run
+
+source build/envsetup.sh
+
+14. Run 
+
+breakfast radxa0
+
+15. Edit .repo/local_manifests/roomservice.xml
+
+nano .repo/local_manifests/roomservice.xml
+
+add the following line before </manifest>:
+
+<project path="vendor/amlogic" name="TheMuppets/proprietary_vendor_amlogic" depth="1" />
+
+16. Run 
+
+repo sync
+
+17. Run 
+
+breakfast radxa0
+
+18. Run 
+
+croot
+
+19. Run 
+
+m aml_upgrade
+
+20. Build the bootloader:
+
+git clone https://github.com/Stricted/deadpool_u-boot_build ~/deadpool_u-boot_build
+cd ~/deadpool_u-boot_build
+./build_radxa0.sh
+cp uboot-bins/u-boot.bin ~/device/radxa/radxa0/factory
+cd 
+
+21. Run 
+
+m aml_upgrade
+
+
+This will get you an Android TV build of LineageOS 18.1, located at out/target/product/radxa0/aml_upgrade_package.img.
+
+
+#Build standard Android
+
+
+22. Update lineage_radxa0.mk
+
+mv ~/device/radxa/radxa0/lineage_radxa0.mk ~/device/radxa/radxa0/lineage_radxa0.mk.atv
+
+nano ~/device/radxa/radxa0/lineage_radxa0.mk
+
+#
+# Copyright (C) 2021 The LineageOS Project
+#
+# SPDX-License-Identifier: Apache-2.0
+#
+
+TARGET_HAS_TEE := false
+
+# Inherit from those products. Most specific first.
+$(call inherit-product, $(SRC_TARGET_DIR)/product/full_base.mk)
+
+# Inherit device configuration
+$(call inherit-product, $(LOCAL_PATH)/device.mk)
+
+# Boot animation
+#
+# device.mk sets the TARGET_SCREEN_HEIGHT and TARGET_SCREEN_WIDTH
+# common_full_tablet_wifionly.mk sets if not set
+#
+# This needs to be between device.mk and common_full_tablet_wifionly.mk
+#
+# TARGET_SCREEN_HEIGHT := 880
+# TARGET_SCREEN_WIDTH := 496
+# TARGET_BOOTANIMATION_HALF_RES := true
+# TARGET_SCREEN_DENSITY := 160
+
+# Inherit some common Lineage stuff.
+$(call inherit-product, vendor/lineage/config/common_mini_tablet_wifionly.mk)
+
+# Device identifier. This must come after all inclusions
+PRODUCT_BRAND := Radxa
+PRODUCT_DEVICE := radxa0
+PRODUCT_MANUFACTURER := radxa
+PRODUCT_MODEL := Radxa Zero
+PRODUCT_NAME := lineage_radxa0
+
+## Characteristics
+PRODUCT_CHARACTERISTICS := tablet
+PRODUCT_IS_ATV := false
+WITH_GMS := true
+
+23.Change this line from device/amlogic/g12-common/BoardConfigCommon.mk:
+
+nano ~/device/amlogic/g12-common/BoardConfigCommon.mk
+
+BOARD_KERNEL_CMDLINE := androidboot.dtbo_idx=0 androidboot.boot_devices=ffe07000.emmc otg_device=1
+
+to this:
+
+BOARD_KERNEL_CMDLINE := androidboot.dtbo_idx=0 androidboot.boot_devices=ffe07000.emmc otg_device=1 androidboot.selinux=permissive
+
+24. Build 
+
+source build/envsetup.sh
+
+breakfast radxa0
+
+croot 
+
+m aml_upgrade
+
+25. Check if image appeared here
+
+ ~/out/target/product/radxa0/aml_upgrade_package.img
+
+25. Open Amlogic USB Burning Tool v2.2.0
+
+26. Select File->Import image->pick aml_upgrade_package.img
+
+27. Press button on back of Radxa Zero and connect Radxa Zero to USB then release button
+
+28. Check if Radxa Zero was detected in USB Burning Tool
+
+29. Press Start and wait about 2 min to flash complete
+
+30. Disconnect Radxa Zero then press Stop then close USB Burning Tool
